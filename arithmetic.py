@@ -57,49 +57,40 @@ class AddMod(cirq.Gate):
   Parameters:
     n: number of qubits.
   
-  Input to gate is 5n+2 qubits split into:
+  Input to gate is 4n+2 qubits split into:
     n qubits for a < N.
-    n qubits for b < N. a+b mod N is saved to these qubits.
+    n qubits for b < N. a+b mod N is saved here.
     n qubits for N.
-    2n+2 ancillary qubits initialized to 0.
+    n+2 ancillary qubits initialized to 0.
   '''
   def __init__(self, n):
     super().__init__()
     self.n = n
   
   def _num_qubits_(self):
-    return 5 * self.n + 2
+    return 4 * self.n + 2
   
   def _circuit_diagram_info_(self, args):
     return ["ADDMOD_a"] * self.n + ["ADDMOD_b"] * self.n + ["ADDMOD_N"] * self.n + \
-           ["ADDMOD_anc"] * (2 * self.n + 2)
+           ["ADDMOD_anc"] * (self.n + 2)
   
   def _decompose_(self, qubits):
     n = self.n
     a = qubits[:n]
-    b = qubits[n:2*n] + (qubits[5*n],) # extra qubit for overflow
+    b = qubits[n:2*n] + (qubits[4*n],) # extra qubit for overflow
     N = qubits[2*n:3*n]
-    anc1 = qubits[3*n:4*n]
-    anc2 = qubits[4*n:5*n]
-    t = qubits[5*n+1]
+    anc = qubits[3*n:4*n]
+    t = qubits[4*n+1]
     
-    yield Add(n).on(*a, *b, *anc1)
-    yield cirq.inverse(Add(n)).on(*N, *b, *anc1)
+    yield Add(n).on(*a, *b, *anc)
+    yield cirq.inverse(Add(n)).on(*N, *b, *anc)
     ## Second register is a+b-N. The most significant digit indicates underflow from subtraction.
     yield cirq.CNOT(b[n], t)
-    ## If t=1 (underflow), copy N to anc2. 
-    for i in range(n):
-      yield cirq.TOFFOLI(t, N[i], anc2[i])
-    ## Add anc2 to second register.
-    yield Add(n).on(*anc2, *b, *anc1)
-    ## Reset anc2.
-    for i in range(n):
-      yield cirq.TOFFOLI(t, N[i], anc2[i])
-    ## Second register is a+b mod N.
+    yield Add(n).controlled(1).on(t, *N, *b, *anc)
     ## To reset t, subtract a from second register. If underflow again, means that t=1 previously.
-    yield cirq.inverse(Add(n)).on(*a, *b, *anc1)
+    yield cirq.inverse(Add(n)).on(*a, *b, *anc)
     yield cirq.CNOT(b[n], t)
-    yield Add(n).on(*a, *b, *anc1)
+    yield Add(n).on(*a, *b, *anc)
         
 
 
@@ -161,7 +152,7 @@ def addmod_unit_test(n_tests=5, n_bits=4):
   a = cirq.GridQubit.rect(1, n, top=0)
   b = cirq.GridQubit.rect(1, n, top=1)
   N = cirq.GridQubit.rect(1, n, top=2)
-  anc = cirq.GridQubit.rect(1, 2*n+2, top=3)
+  anc = cirq.GridQubit.rect(1, n+2, top=3)
   
   for i_test in range(n_tests):
       
