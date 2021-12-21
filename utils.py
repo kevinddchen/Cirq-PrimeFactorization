@@ -7,3 +7,12 @@ def prepare_state(qubits, i):
     if (i % 2):
       yield cirq.X(q)
     i >>= 1
+
+
+def bits_to_integer(bits):
+  '''From a string of bits, return the integer representation.'''
+  i = 0
+  for b in bits[::-1]:
+    i <<= 1
+    i += b
+  return i
