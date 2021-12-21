@@ -4,95 +4,97 @@ import utils
 
 
 class Add(cirq.Gate):
-  '''Add two integers a and b, each encoded in n qubits. To account for
-  potential overflow, an extra qubit, initialized to zero, must be supplied for b. 
+  '''Add classical integer a to qubit b. To account for potential overflow, an
+  extra qubit (initialized to zero) must be supplied for b. 
   
-    |a; b> --> |a; a+b>
+    |b> --> |b+a>
       
   Parameters:
     n: number of qubits.
+    a: integer, 0 <= a < 2**n.
   
-  Input to gate is 3n+1 qubits split into:
-    n qubits for a. 
-    n+1 qubits for b, with most significant digit initialized to 0. a+b is saved here.
-    n ancillary qubits initialized to 0.
+  Input to gate is 2n+1 qubits split into:
+    n+1 qubits for b, with most significant digit initialized to 0. b+a is saved here.
+    n ancillary qubits initialized to 0. Remain 0 after operation.
   '''
-  def __init__(self, n):
+  def __init__(self, n, a):
     super().__init__()
     self.n = n
+    self.a = a
   
   def _num_qubits_(self):
-    return 3*self.n + 1
+    return 2 * self.n + 1
   
   def _circuit_diagram_info_(self, args):
-    return ["ADD_a"] * self.n + ["ADD_b"] * (self.n + 1) + ["ADD_anc"] * self.n 
+    return ["Add_b"] * (self.n + 1) + ["Add_anc"] * self.n 
   
   def _decompose_(self, qubits):
     n = self.n
-    a = qubits[:n]
-    b = qubits[n:2*n]
-    anc = qubits[2*n+1:] + (qubits[2*n],) # b[n] is placed in anc[n] for simplicity
+    a = utils.integer_to_bits(n, self.a)
+    b = qubits[:n]
+    anc = qubits[n+1:] + (qubits[n],) # internally, b[n] is placed in anc[n]
     ## In forward pass, store carried bits in ancilla.
     for i in range(n):
-      yield cirq.TOFFOLI(a[i], b[i], anc[i+1])
-      yield cirq.CNOT(a[i], b[i])
+      if a[i]:
+        yield cirq.CNOT(b[i], anc[i+1])
+        yield cirq.X(b[i])
       yield cirq.TOFFOLI(anc[i], b[i], anc[i+1])
     yield cirq.CNOT(anc[n-1], b[n-1])
     ## In backward pass, undo carries and add a and carries to b.
     for i in range(n-2, -1, -1):
-      ## inverse carry
       yield cirq.TOFFOLI(anc[i], b[i], anc[i+1])
-      yield cirq.CNOT(a[i], b[i])
-      yield cirq.TOFFOLI(a[i], b[i], anc[i+1])
-      ## sum
-      yield cirq.CNOT(a[i], b[i])
+      if a[i]:
+        yield cirq.X(b[i])
+        yield cirq.CNOT(b[i], anc[i+1])
+        yield cirq.X(b[i])
       yield cirq.CNOT(anc[i], b[i])
 
 
-class AddMod(cirq.Gate):
-  '''Add two integers mod N. Integers must be less than N.
+class MAdd(cirq.Gate):
+  '''Add classical integer a to qubit b, modulo N. Integers must be less than N.
   
-    |a; b> --> |a; a+b mod N>
+    |b> --> |b+a mod N>
       
   Parameters:
     n: number of qubits.
+    a: integer, 0 <= a < N
+    N: integer, 0 <= N < 2**n
   
-  Input to gate is 4n+2 qubits split into:
-    n qubits for a < N.
+  Input to gate is 2n+2 qubits split into:
     n qubits for b < N. a+b mod N is saved here.
-    n qubits for N.
-    n+2 ancillary qubits initialized to 0.
+    n+2 ancillary qubits initialized to 0. Remain 0 after operation.
   '''
-  def __init__(self, n):
+  def __init__(self, n, a, N):
     super().__init__()
     self.n = n
+    self.a = a
+    self.N = N
   
   def _num_qubits_(self):
-    return 4 * self.n + 2
+    return 2 * self.n + 2
   
   def _circuit_diagram_info_(self, args):
-    return ["ADDMOD_a"] * self.n + ["ADDMOD_b"] * self.n + ["ADDMOD_N"] * self.n + \
-           ["ADDMOD_anc"] * (self.n + 2)
+    return ["MAdd_b"] * self.n + ["MAdd_anc"] * (self.n + 2)
   
   def _decompose_(self, qubits):
     n = self.n
-    a = qubits[:n]
-    b = qubits[n:2*n] + (qubits[4*n],) # extra qubit for overflow
-    N = qubits[2*n:3*n]
-    anc = qubits[3*n:4*n]
-    t = qubits[4*n+1]
+    b = qubits[:n+1] # extra qubit for overflow
+    anc = qubits[n+1:2*n+1]
+    t = qubits[2*n+1]
     
-    yield Add(n).on(*a, *b, *anc)
-    yield cirq.inverse(Add(n)).on(*N, *b, *anc)
+    Add_a = Add(n, self.a)
+    Add_N = Add(n, self.N)
+    yield Add_a.on(*b, *anc)
+    yield cirq.inverse(Add_N).on(*b, *anc)
     ## Second register is a+b-N. The most significant digit indicates underflow from subtraction.
     yield cirq.CNOT(b[n], t)
-    yield Add(n).controlled(1).on(t, *N, *b, *anc)
+    yield Add_N.controlled(1).on(t, *b, *anc)
     ## To reset t, subtract a from second register. If underflow again, means that t=0 previously.
-    yield cirq.inverse(Add(n)).on(*a, *b, *anc)
+    yield cirq.inverse(Add_a).on(*b, *anc)
     yield cirq.X(b[n])
     yield cirq.CNOT(b[n], t)
     yield cirq.X(b[n])
-    yield Add(n).on(*a, *b, *anc)
+    yield Add_a.on(*b, *anc)
         
 
 ## ========================
@@ -100,15 +102,14 @@ class AddMod(cirq.Gate):
 ## ========================
 
 
-def add_unit_test(n_tests=5, n_bits=6):
+def add_unit_test(n_tests=5, n_bits=8):
     
-  print("ADD unit test")
+  print("Add unit test")
   print("Number of bits: {0:d}".format(n_bits))
   
   n = n_bits
-  a = cirq.GridQubit.rect(1, n, top=0)
-  b = cirq.GridQubit.rect(1, n+1, top=1)
-  anc = cirq.GridQubit.rect(1, n, top=2)
+  b = cirq.GridQubit.rect(1, n+1, top=0)
+  anc = cirq.GridQubit.rect(1, n, top=1)
   
   for i_test in range(n_tests):
       
@@ -117,20 +118,17 @@ def add_unit_test(n_tests=5, n_bits=6):
     b_int = np.random.randint(2 ** n)
 
     circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(a, a_int))
     circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(Add(n).on(*a, *b, *anc))
-    circuit.append(cirq.measure(*a, *b, *anc))
+    circuit.append(Add(n, a_int).on(*b, *anc))
+    circuit.append(cirq.measure(*b, *anc))
 
     ## Run one measurement and interpret result.
     result = cirq.Simulator().run(circuit, repetitions=1)
     for key in result.measurements:
       out_array = result.measurements[key][0]
-      a_out = utils.bits_to_integer(out_array[:n])
-      b_out = utils.bits_to_integer(out_array[n:2*n+1])
-      anc_out = utils.bits_to_integer(out_array[2*n+1:])
+      b_out = utils.bits_to_integer(out_array[:n+1])
+      anc_out = utils.bits_to_integer(out_array[n+1:])
 
-      assert a_out == a_int, "a qubits must be unchanged."
       assert b_out == a_int + b_int, "Incorrect addition."
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {0:2d} PASSED: {1:3d} + {2:3d} = {3:3d}".format(i_test, a_int, b_int, b_out))
@@ -138,16 +136,14 @@ def add_unit_test(n_tests=5, n_bits=6):
   return True
 
 
-def addmod_unit_test(n_tests=5, n_bits=4):
+def madd_unit_test(n_tests=5, n_bits=8):
     
-  print("ADDMOD unit test")
+  print("MAdd unit test")
   print("Number of bits: {0:d}".format(n_bits))
     
   n = n_bits
-  a = cirq.GridQubit.rect(1, n, top=0)
-  b = cirq.GridQubit.rect(1, n, top=1)
-  N = cirq.GridQubit.rect(1, n, top=2)
-  anc = cirq.GridQubit.rect(1, n+2, top=3)
+  b = cirq.GridQubit.rect(1, n, top=0)
+  anc = cirq.GridQubit.rect(1, n+2, top=1)
   
   for i_test in range(n_tests):
       
@@ -158,24 +154,18 @@ def addmod_unit_test(n_tests=5, n_bits=4):
     b_int = np.random.randint(N_int)
 
     circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(a, a_int))
     circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(utils.prepare_state(N, N_int))
-    circuit.append(AddMod(n).on(*a, *b, *N, *anc))
-    circuit.append(cirq.measure(*a, *b, *N, *anc))
+    circuit.append(MAdd(n, a_int, N_int).on(*b, *anc))
+    circuit.append(cirq.measure(*b, *anc))
 
     ## Run one measurement and interpret result.
     result = cirq.Simulator().run(circuit, repetitions=1)
     for key in result.measurements:
       out_array = result.measurements[key][0]
-      a_out = utils.bits_to_integer(out_array[:n])
-      b_out = utils.bits_to_integer(out_array[n:2*n])
-      N_out = utils.bits_to_integer(out_array[2*n:3*n])
-      anc_out = utils.bits_to_integer(out_array[3*n:])
+      b_out = utils.bits_to_integer(out_array[:n])
+      anc_out = utils.bits_to_integer(out_array[n:])
 
-      assert a_out == a_int, "a qubits must be unchanged."
       assert b_out == (a_int + b_int) % N_int, "Incorrect addition."
-      assert N_out == N_int, "N qubits must be unchanged."
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {0:2d} PASSED: {1:3d} + {2:3d} = {3:3d} (mod {4:d})".format(i_test, a_int, b_int, b_out, N_int))
       
@@ -185,4 +175,4 @@ def addmod_unit_test(n_tests=5, n_bits=4):
 if __name__ == "__main__":
   
   assert add_unit_test()
-  assert addmod_unit_test()
+  assert madd_unit_test()

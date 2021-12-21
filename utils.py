@@ -16,3 +16,12 @@ def bits_to_integer(bits):
     i <<= 1
     i += b
   return i
+
+
+def integer_to_bits(n, i):
+  '''From integer, return string of bits representation. n is total number of bits.'''
+  bits = []
+  for j in range(n):
+    bits.append(i % 2)
+    i >>= 1
+  return bits
