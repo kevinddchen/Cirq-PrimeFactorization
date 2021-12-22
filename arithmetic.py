@@ -3,19 +3,24 @@ import numpy as np
 import utils
 
 
+## Quantum gates for arithmetic.
+## Implementation based on https://arxiv.org/abs/quant-ph/9511018.
+## TODO: try QFT-based gates in https://arxiv.org/abs/quant-ph/0205095. May be more efficient.
+
+
 class Add(cirq.Gate):
-  '''Add classical integer a to qubit b. To account for potential overflow, an
+  '''Add classical integer a to qubit b. To account for possible overflow, an
   extra qubit (initialized to zero) must be supplied for b. 
   
     |b> --> |b+a>
       
   Parameters:
     n: number of qubits.
-    a: integer, 0 <= a < 2**n.
+    a: integer, 0 <= a < 2^n.
   
   Input to gate is 2n+1 qubits split into:
-    n+1 qubits for b, with most significant digit initialized to 0. b+a is saved here.
-    n ancillary qubits initialized to 0. Remain 0 after operation.
+    n+1 qubits for b, 0 <= b < 2^n. The most significant digit is initialized to 0. b+a is saved here.
+    n ancillary qubits initialized to 0. Unchanged by operation.
   '''
   def __init__(self, n, a):
     super().__init__()
@@ -33,6 +38,7 @@ class Add(cirq.Gate):
     a = utils.integer_to_bits(n, self.a)
     b = qubits[:n]
     anc = qubits[n+1:] + (qubits[n],) # internally, b[n] is placed in anc[n]
+
     ## In forward pass, store carried bits in ancilla.
     for i in range(n):
       if a[i]:
@@ -40,7 +46,7 @@ class Add(cirq.Gate):
         yield cirq.X(b[i])
       yield cirq.TOFFOLI(anc[i], b[i], anc[i+1])
     yield cirq.CNOT(anc[n-1], b[n-1])
-    ## In backward pass, undo carries and add a and carries to b.
+    ## In backward pass, undo carries, then add a and carries to b.
     for i in range(n-2, -1, -1):
       yield cirq.TOFFOLI(anc[i], b[i], anc[i+1])
       if a[i]:
@@ -51,18 +57,19 @@ class Add(cirq.Gate):
 
 
 class MAdd(cirq.Gate):
-  '''Add classical integer a to qubit b, modulo N. Integers must be less than N.
+  '''Add classical integer a to qubit b, modulo N. Integers a and b must be less 
+  than N for correct behavior.
   
     |b> --> |b+a mod N>
       
   Parameters:
     n: number of qubits.
-    a: integer, 0 <= a < N
-    N: integer, 0 <= N < 2**n
+    a: integer, 0 <= a < N.
+    N: integer, 1 < N < 2^n.
   
   Input to gate is 2n+2 qubits split into:
-    n qubits for b < N. a+b mod N is saved here.
-    n+2 ancillary qubits initialized to 0. Remain 0 after operation.
+    n qubits for b, 0 <= b < N. a+b mod N is saved here. 
+    n+2 ancillary qubits initialized to 0. Unchanged by operation.
   '''
   def __init__(self, n, a, N):
     super().__init__()
@@ -98,8 +105,8 @@ class MAdd(cirq.Gate):
 
 
 class CMMult(cirq.Gate):
-  '''Controlled gate that multiplies qubit b by classical integer a, modulo N.
-  Integers must be less than N.
+  '''Controlled multiplication of qubit b by classical integer a, modulo N.
+  Integers a and b must be less than N for correct behavior.
 
     |c; b; 0> --> |c; b; b*a mod N>  if c = 1
                   |c; b; b>          if c = 0
@@ -107,11 +114,11 @@ class CMMult(cirq.Gate):
   Parameters: 
     n: number of qubits. 
     a: integer, 0 <= a < N.
-    N: integer, 0 <= N < 2 ** n.
+    N: integer, 1 < N < 2^n.
 
   Input to gate is 3n+3 qubits split into: 
     1 qubit for c. Unchanged by operation.
-    n qubits for b < N. Unchanged by operation. 
+    n qubits for b, 0 <= b < N. Unchanged by operation. 
     n qubits initialized to 0. b*a mod N is saved here. 
     n+2 ancillary qubits initialized to 0. Unchanged by operation.
   '''
@@ -135,7 +142,7 @@ class CMMult(cirq.Gate):
     prod = qubits[n+1:2*n+1]
     anc = qubits[2*n+1:]
 
-    d = self.a # stores a * (2 ** i) mod N
+    d = self.a # stores a * 2^i mod N
     for i in range(n):
       yield MAdd(n, d, N).controlled(2).on(c, b[i], *prod, *anc)
       d = (d << 1) % N
@@ -147,23 +154,26 @@ class CMMult(cirq.Gate):
 
 
 class MExp(cirq.Gate):
-  '''Performs the map,
+  '''Multiply qubit b by a^k, where a is a classical integer. Integers a and b 
+  must be less than N for correct behavior.
 
-    |k; b> --> |k; b*a^k mod N>
+    |k; b> --> |k; b * a^k mod N>
 
   Parameters: 
     m: number of qubits for k.
     n: number of qubits for x. 
-    a: integer, 0 <= a < N and gcd(a, N) = 1.
-    N: integer, 0 <= N < 2 ** n.
+    a: integer, 1 <= a < N and gcd(a, N) = 1.
+    N: integer, 1 < N < 2^n.
 
   Input to gate is m+3n+2 qubits split into: 
-    m qubits for k. Unchanged by operation.
-    n qubits for b < N. b*a^k mod N is saved here.
+    m qubits for k, 0 <= k < 2^m. Unchanged by operation.
+    n qubits for b, 0 <= b < N. b * a^k mod N is saved here.
     2n+2 ancillary qubits initialized to 0. Unchanged by operation.
   '''
   def __init__(self, m, n, a, N):
     super().__init__()
+    assert 0 < a, "a must be positive. (a={})".format(a)
+    assert np.gcd(a, N) == 1, "a and N must be coprime. (a={}, N={})".format(a, N)
     self.m = m
     self.n = n
     self.a = a
@@ -185,13 +195,13 @@ class MExp(cirq.Gate):
     zeros = qubits[m+n:m+2*n]
     anc = qubits[m+2*n:]
 
-    d = self.a # stores a ** (2 ** i )
-    id = self.ia # stores a ** (- 2 ** i)
+    d = self.a # stores a^(2^i)
+    id = self.ia # stores a^(-2^i)
     for i in range(m):
       yield CMMult(n, d, N).on(k[i], *b, *zeros, *anc)
       yield cirq.inverse(CMMult(n, id, N)).on(k[i], *zeros, *b, *anc)
       b, zeros = zeros, b
-      ## b is multiplied by a ** (2 ** i). zeros is 0.
+      ## b is multiplied by a^(2^i). zeros is 0.
       d = (d * d) % N
       id = (id * id) % N
     ## if m is odd, then "b" and "zeros" are swapped
@@ -232,7 +242,8 @@ def add_unit_test(n_tests=5, n_bits=8):
       b_out = utils.bits_to_integer(out_array[:n+1])
       anc_out = utils.bits_to_integer(out_array[n+1:])
 
-      assert b_out == a_int + b_int, "Incorrect addition."
+      b_exp = a_int + b_int
+      assert b_out == b_exp, "Incorrect addition. (output={}, expected={})".format(b_out, b_exp)
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {:2d}/{:d} PASSED: {:3d} + {:3d} = {:3d}".format(
         i_test+1, n_tests, a_int, b_int, b_out
@@ -271,7 +282,8 @@ def madd_unit_test(n_tests=5, n_bits=8):
       b_out = utils.bits_to_integer(out_array[:n])
       anc_out = utils.bits_to_integer(out_array[n:])
 
-      assert b_out == (a_int + b_int) % N_int, "Incorrect addition."
+      b_exp = (a_int + b_int) % N_int
+      assert b_out == b_exp, "Incorrect addition. (output={}, expected={})".format(b_out, b_exp)
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {:2d}/{:d} PASSED: {:3d} + {:3d} = {:3d} (mod {:3d})".format(
         i_test+1, n_tests, a_int, b_int, b_out, N_int
@@ -315,9 +327,10 @@ def mmult_unit_test(n_tests=5, n_bits=4):
       prod_out = utils.bits_to_integer(out_array[n+1:2*n+1])
       anc_out = utils.bits_to_integer(out_array[2*n+1:])
 
+      prod_exp = (a_int * b_int) % N_int
       assert c_out == 1, "control qubit must be unchanged."
       assert b_out == b_int, "b qubits must be unchanged."
-      assert prod_out == (a_int * b_int) % N_int, "Incorrect product."
+      assert prod_out == prod_exp, "Incorrect product. (output={}, expected={})".format(prod_out, prod_exp)
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {:2d}/{:d} PASSED: {:2d} * {:2d} = {:2d} (mod {:2d})".format(
         i_test+1, n_tests, a_int, b_int, prod_out, N_int
@@ -329,7 +342,6 @@ def mmult_unit_test(n_tests=5, n_bits=4):
 
 def mexp_unit_test(n_tests=5, n_bits=4):
     
-  from math import gcd
   print("MExp unit test")
   print("Number of bits: {0:d}".format(n_bits))
     
@@ -345,7 +357,7 @@ def mexp_unit_test(n_tests=5, n_bits=4):
     N_int = np.random.randint( 2 ** (n-1), 2 ** n)
     k_int = np.random.randint( 2 ** (m-1), 2 ** m)
     a_int = N_int
-    while gcd(a_int, N_int) != 1:
+    while np.gcd(a_int, N_int) != 1:
       a_int = np.random.randint(2, N_int)
     b_int = np.random.randint(N_int)
 
@@ -363,8 +375,9 @@ def mexp_unit_test(n_tests=5, n_bits=4):
       b_out = utils.bits_to_integer(out_array[m:m+n])
       anc_out = utils.bits_to_integer(out_array[m+n:])
 
+      b_exp = (b_int * pow(a_int, k_int, N_int)) % N_int
       assert k_out == k_int, "k qubits must be unchanged."
-      assert b_out == (b_int * pow(a_int, k_int, N_int)) % N_int, "Incorrect product."
+      assert b_out == b_exp, "Incorrect product. (output={}, expected={})".format(b_out, b_exp)
       assert anc_out == 0, "Ancillary qubits must be unchanged."
       print("Test {:2d}/{:d} PASSED: {:2d} * ({:2d} ** {:2d}) = {:2d} (mod {:2d})".format(
         i_test+1, n_tests, b_int, a_int, k_int, b_out, N_int

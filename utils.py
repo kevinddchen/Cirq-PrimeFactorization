@@ -15,7 +15,7 @@ def bits_to_integer(bits):
   for b in bits[::-1]:
     i <<= 1
     i += b
-  return i
+  return int(i)
 
 
 def integer_to_bits(n, i):
