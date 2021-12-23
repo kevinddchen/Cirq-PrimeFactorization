@@ -10,7 +10,8 @@ import utils
 
 class Add(cirq.Gate):
   '''Add classical integer a to qubit b. To account for possible overflow, an
-  extra qubit (initialized to zero) must be supplied for b. 
+  extra qubit (initialized to zero) must be supplied for b. Uses O(n) elementary 
+  gates.
   
     |b> --> |b+a>
       
@@ -58,7 +59,7 @@ class Add(cirq.Gate):
 
 class MAdd(cirq.Gate):
   '''Add classical integer a to qubit b, modulo N. Integers a and b must be less 
-  than N for correct behavior.
+  than N for correct behavior. Uses O(n) elementary gates.
   
     |b> --> |b+a mod N>
       
@@ -104,22 +105,22 @@ class MAdd(cirq.Gate):
     yield Add_a.on(*b, *anc)
 
 
-class CMMult(cirq.Gate):
-  '''Controlled multiplication of qubit b by classical integer a, modulo N.
-  Integers a and b must be less than N for correct behavior.
+class MMult(cirq.Gate):
+  '''Multiply qubit x by classical integer a, modulo N. Exact map is:
 
-    |c; b; 0> --> |c; b; b*a mod N>  if c = 1
-                  |c; b; b>          if c = 0
+    |x; b> --> |x; b + x*a mod N>
+  
+  Integers a, b, and x must be less than N for correct behavior. Uses O(n^2)
+  elementary gates.
 
   Parameters: 
     n: number of qubits. 
     a: integer, 0 <= a < N.
     N: integer, 1 < N < 2^n.
 
-  Input to gate is 3n+3 qubits split into: 
-    1 qubit for c. Unchanged by operation.
-    n qubits for b, 0 <= b < N. Unchanged by operation. 
-    n qubits initialized to 0. b*a mod N is saved here. 
+  Input to gate is 3n+2 qubits split into: 
+    n qubits for x, 0 <= x < N. Unchanged by operation. 
+    n qubits for b, 0 <= b < N. b + x*a mod N is saved here. 
     n+2 ancillary qubits initialized to 0. Unchanged by operation.
   '''
   def __init__(self, n, a, N):
@@ -129,35 +130,80 @@ class CMMult(cirq.Gate):
     self.N = N
   
   def _num_qubits_(self):
-    return 3 * self.n + 3
+    return 3 * self.n + 2
   
   def _circuit_diagram_info_(self, args):
-    return ["CMMult_c"] + ["CMMult_b"] * self.n + ["CMMult_out"] * self.n + ["CMMult_anc"] * (self.n + 2)
+    return ["MMult_x"] * self.n + ["MMult_b"] * self.n + ["MMult_anc"] * (self.n + 2)
   
   def _decompose_(self, qubits):
     n = self.n
     N = self.N
-    c = qubits[0]
-    b = qubits[1:n+1]
-    prod = qubits[n+1:2*n+1]
-    anc = qubits[2*n+1:]
+    x = qubits[:n]
+    b = qubits[n:2*n]
+    anc = qubits[2*n:]
 
+    ## x*a = (2^(n-1) x_(n-1) a + ... + 2 x_1 a + x_0 a)
+    ## so the bits of x control the addition of a * 2^i
     d = self.a # stores a * 2^i mod N
     for i in range(n):
-      yield MAdd(n, d, N).controlled(2).on(c, b[i], *prod, *anc)
+      yield MAdd(n, d, N).controlled(1).on(x[i], *b, *anc)
       d = (d << 1) % N
-    ## If c=0, just copy b to prod.
-    yield cirq.X(c)
+
+
+class Ua(cirq.Gate):
+  '''Applies the unitary n-qubit operation,
+
+    |x> --> |x*a mod N>
+
+  where gcd(a, N) = 1. Integers a and x must be less than N for correct
+  behavior. Uses O(n^2) elementary gates.
+
+  Parameters: 
+    n: number of qubits. 
+    a: integer, 0 <= a < N and gcd(a, N) = 1.
+    N: integer, 1 < N < 2^n.
+    inv_a: (optional) integer, inverse of a mod N. Skips recalculation of this if provided.
+
+  Input to gate is 3n+2 qubits split into: 
+    n qubits for x, 0 <= x < N. x*a mod N is saved here. 
+    2n+2 ancillary qubits initialized to 0. Unchanged by operation.
+  '''
+  def __init__(self, n, a, N, inv_a=None):
+    super().__init__()
+    self.n = n
+    self.a = a
+    self.N = N
+    if inv_a:
+      self.inv_a = inv_a
+    else:
+      assert np.gcd(a, N) == 1, "Must have gcd(a, N) = 1."
+      self.inv_a = pow(a, -1, N)
+  
+  def _num_qubits_(self):
+    return 3 * self.n + 2
+  
+  def _circuit_diagram_info_(self, args):
+    return ["Ua_x"] * self.n + ["Ua_anc"] * (2 * self.n + 2)
+  
+  def _decompose_(self, qubits):
+    n = self.n
+    N = self.N
+    x = qubits[:n]
+    anc_mult = qubits[n:2*n]
+    anc_add = qubits[2*n:]
+
+    yield MMult(n, self.a, N).on(*x, *anc_mult, *anc_add)
     for i in range(n):
-      yield cirq.TOFFOLI(c, b[i], prod[i])
-    yield cirq.X(c)
+      yield cirq.SWAP(x[i], anc_mult[i])
+    yield cirq.inverse(MMult(n, self.inv_a, N)).on(*x, *anc_mult, *anc_add)
 
 
 class MExp(cirq.Gate):
-  '''Multiply qubit b by a^k, where a is a classical integer. Integers a and b 
-  must be less than N for correct behavior.
+  '''Multiply qubit x by a^k, modulo N, where a is a classical integer and
+  gcd(a, N) = 1. Integers a and x must be less than N for correct behavior. Uses
+  O(m * n^2) elementary gates.
 
-    |k; b> --> |k; b * a^k mod N>
+    |k; x> --> |k; x * a^k mod N>
 
   Parameters: 
     m: number of qubits for k.
@@ -167,47 +213,38 @@ class MExp(cirq.Gate):
 
   Input to gate is m+3n+2 qubits split into: 
     m qubits for k, 0 <= k < 2^m. Unchanged by operation.
-    n qubits for b, 0 <= b < N. b * a^k mod N is saved here.
+    n qubits for x, 0 <= x < N. x * a^k mod N is saved here.
     2n+2 ancillary qubits initialized to 0. Unchanged by operation.
   '''
   def __init__(self, m, n, a, N):
     super().__init__()
-    assert 0 < a, "a must be positive. (a={})".format(a)
-    assert np.gcd(a, N) == 1, "a and N must be coprime. (a={}, N={})".format(a, N)
     self.m = m
     self.n = n
     self.a = a
-    self.ia = pow(a, -1, N) # inverse of a mod N
+    assert np.gcd(a, N) == 1, "Must have gcd(a, N) = 1."
+    self.inv_a = pow(a, -1, N) # inverse of a mod N
     self.N = N
   
   def _num_qubits_(self):
     return self.m + 3 * self.n + 2
   
   def _circuit_diagram_info_(self, args):
-    return ["MExp_k"] * self.m + ["MExp_b"] * self.n + ["MExp_anc"] * (2 * self.n + 2)
+    return ["MExp_k"] * self.m + ["MExp_x"] * self.n + ["MExp_anc"] * (2 * self.n + 2)
   
   def _decompose_(self, qubits):
     m = self.m
     n = self.n
     N = self.N
     k = qubits[:m]
-    b = qubits[m:m+n]
-    zeros = qubits[m+n:m+2*n]
-    anc = qubits[m+2*n:]
+    x = qubits[m:m+n]
+    anc = qubits[m+n:]
 
     d = self.a # stores a^(2^i)
-    id = self.ia # stores a^(-2^i)
+    inv_d = self.inv_a # stores a^(-2^i)
     for i in range(m):
-      yield CMMult(n, d, N).on(k[i], *b, *zeros, *anc)
-      yield cirq.inverse(CMMult(n, id, N)).on(k[i], *zeros, *b, *anc)
-      b, zeros = zeros, b
-      ## b is multiplied by a^(2^i). zeros is 0.
+      yield Ua(n, d, N, inv_d).controlled(1).on(k[i], *x, *anc)
       d = (d * d) % N
-      id = (id * id) % N
-    ## if m is odd, then "b" and "zeros" are swapped
-    if (m % 2):
-      for i in range(n):
-        yield cirq.SWAP(b[i], zeros[i])
+      inv_d = (inv_d * inv_d) % N
 
 
 ## ========================
@@ -215,181 +252,154 @@ class MExp(cirq.Gate):
 ## ========================
 
 
-def add_unit_test(n_tests=5, n_bits=8):
-    
-  print("Add unit test")
-  print("Number of bits: {0:d}".format(n_bits))
-  
-  n = n_bits
-  b = cirq.GridQubit.rect(1, n+1, top=0)
-  anc = cirq.GridQubit.rect(1, n, top=1)
-  
-  for i_test in range(n_tests):
-      
-    ## Pick two random integers.
-    a_int = np.random.randint(2 ** n)
-    b_int = np.random.randint(2 ** n)
+def unit_test(gate, n_qubits, inputs, expected_outputs):
+  '''Returns True if test passes, False if test fails. `n_qubits`, `inputs`, and
+  `expected_outputs` are all lists of the same length.'''
 
-    circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(Add(n, a_int).on(*b, *anc))
-    circuit.append(cirq.measure(*b, *anc))
+  ## declare qubits
+  n_qubits_total = sum(n_qubits)
+  qubits = cirq.LineQubit.range(n_qubits_total)
 
-    ## Run one measurement and interpret result.
-    result = cirq.Simulator().run(circuit, repetitions=1)
-    for key in result.measurements:
-      out_array = result.measurements[key][0]
-      b_out = utils.bits_to_integer(out_array[:n+1])
-      anc_out = utils.bits_to_integer(out_array[n+1:])
+  ## initialize qubits
+  circuit = cirq.Circuit()
+  cum_n = 0
+  for i, n in enumerate(n_qubits):
+    circuit.append(utils.prepare_state(qubits[cum_n:cum_n + n], inputs[i]))
+    cum_n += n
 
-      b_exp = a_int + b_int
-      assert b_out == b_exp, "Incorrect addition. (output={}, expected={})".format(b_out, b_exp)
-      assert anc_out == 0, "Ancillary qubits must be unchanged."
-      print("Test {:2d}/{:d} PASSED: {:3d} + {:3d} = {:3d}".format(
-        i_test+1, n_tests, a_int, b_int, b_out
-      ))
+  circuit.append(gate(*qubits))
+  circuit.append(cirq.measure(*qubits))
 
-  print()   
+  ## perform one measurement
+  result = cirq.Simulator().run(circuit, repetitions=1)
+  _, raw_output = result.measurements.popitem()
+
+  cum_n = 0
+  for i, n in enumerate(n_qubits):
+    output_i = utils.bits_to_integer(raw_output[0, cum_n:cum_n + n])
+    if output_i != expected_outputs[i]:
+      print("Unexpected output in register {:d}. (output={:d}, expected={:d})".format(i, output_i, expected_outputs[i]))
+      return False
+    cum_n += n
+
   return True
+
+
+def add_unit_test(n_tests=5, n_bits=8):
+  print("Add unit test")
+  print("Number of bits: {:d}".format(n_bits))
+  n = n_bits
+  n_qubits = [n+1, n]
+
+  for _ in range(n_tests):
+    ## Pick random integers.
+    a = np.random.randint(2 ** n)
+    b = np.random.randint(2 ** n)
+
+    inputs = [b, 0]
+    expected_outputs = [b+a, 0]
+    if unit_test(Add(n, a), n_qubits, inputs, expected_outputs):
+      print("PASS: {:3d} + {:3d} = {:3d}".format(b, a, b+a))
+    else:
+      break
+  print()
 
 
 def madd_unit_test(n_tests=5, n_bits=8):
-    
   print("MAdd unit test")
-  print("Number of bits: {0:d}".format(n_bits))
-    
+  print("Number of bits: {:d}".format(n_bits))
   n = n_bits
-  b = cirq.GridQubit.rect(1, n, top=0)
-  anc = cirq.GridQubit.rect(1, n+2, top=1)
-  
-  for i_test in range(n_tests):
-      
-    ## Pick random N.
-    N_int = np.random.randint( 2 ** (n-1), 2 ** n)
-    ## Pick two random integers.
-    a_int = np.random.randint(N_int)
-    b_int = np.random.randint(N_int)
+  n_qubits = [n, n+2]
 
-    circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(MAdd(n, a_int, N_int).on(*b, *anc))
-    circuit.append(cirq.measure(*b, *anc))
+  for _ in range(n_tests):
+    ## Pick random integers.
+    N = np.random.randint(2 ** (n-1), 2 ** n)
+    a = np.random.randint(N)
+    b = np.random.randint(N)
 
-    ## Run one measurement and interpret result.
-    result = cirq.Simulator().run(circuit, repetitions=1)
-    for key in result.measurements:
-      out_array = result.measurements[key][0]
-      b_out = utils.bits_to_integer(out_array[:n])
-      anc_out = utils.bits_to_integer(out_array[n:])
-
-      b_exp = (a_int + b_int) % N_int
-      assert b_out == b_exp, "Incorrect addition. (output={}, expected={})".format(b_out, b_exp)
-      assert anc_out == 0, "Ancillary qubits must be unchanged."
-      print("Test {:2d}/{:d} PASSED: {:3d} + {:3d} = {:3d} (mod {:3d})".format(
-        i_test+1, n_tests, a_int, b_int, b_out, N_int
-      ))
-
-  print()   
-  return True
+    inputs = [b, 0]
+    expected_outputs = [(b+a)%N, 0]
+    if unit_test(MAdd(n, a, N), n_qubits, inputs, expected_outputs):
+      print("PASS: {:3d} + {:3d} = {:3d} (mod {:d})".format(b, a, (b+a)%N, N))
+    else:
+      break
+  print()
 
 
 def mmult_unit_test(n_tests=5, n_bits=4):
-    
-  print("CMMult unit test")
-  print("Number of bits: {0:d}".format(n_bits))
-    
+  print("MMult unit test")
+  print("Number of bits: {:d}".format(n_bits))
   n = n_bits
-  c = cirq.GridQubit.rect(1, 1, top=0)
-  b = cirq.GridQubit.rect(1, n, top=1)
-  prod = cirq.GridQubit.rect(1, n, top=2)
-  anc = cirq.GridQubit.rect(1, n+2, top=3)
-  
-  for i_test in range(n_tests):
-      
-    ## Pick random N.
-    N_int = np.random.randint( 2 ** (n-1), 2 ** n)
-    ## Pick two random integers.
-    a_int = np.random.randint(N_int)
-    b_int = np.random.randint(N_int)
+  n_qubits = [n, n, n+2]
 
-    circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(utils.prepare_state(c, 1))
-    circuit.append(CMMult(n, a_int, N_int).on(*c, *b, *prod, *anc))
-    circuit.append(cirq.measure(*c, *b, *prod, *anc))
+  for _ in range(n_tests):
+    ## Pick random integers.
+    N = np.random.randint(2 ** (n-1), 2 ** n)
+    a = np.random.randint(N)
+    b = np.random.randint(N)
+    x = np.random.randint(N)
 
-    ## Run one measurement and interpret result.
-    result = cirq.Simulator().run(circuit, repetitions=1)
-    for key in result.measurements:
-      out_array = result.measurements[key][0]
-      c_out = utils.bits_to_integer(out_array[:1])
-      b_out = utils.bits_to_integer(out_array[1:n+1])
-      prod_out = utils.bits_to_integer(out_array[n+1:2*n+1])
-      anc_out = utils.bits_to_integer(out_array[2*n+1:])
-
-      prod_exp = (a_int * b_int) % N_int
-      assert c_out == 1, "control qubit must be unchanged."
-      assert b_out == b_int, "b qubits must be unchanged."
-      assert prod_out == prod_exp, "Incorrect product. (output={}, expected={})".format(prod_out, prod_exp)
-      assert anc_out == 0, "Ancillary qubits must be unchanged."
-      print("Test {:2d}/{:d} PASSED: {:2d} * {:2d} = {:2d} (mod {:2d})".format(
-        i_test+1, n_tests, a_int, b_int, prod_out, N_int
-      ))
-      
+    inputs = [x, b, 0]
+    expected_outputs = [x, (b+x*a)%N, 0]
+    if unit_test(MMult(n, a, N), n_qubits, inputs, expected_outputs):
+      print("PASS: {:2d} + {:2d} * {:2d} = {:3d} (mod {:d})".format(b, x, a, (b+x*a)%N, N))
+    else:
+      break
   print()
-  return True
+
+
+def ua_unit_test(n_tests=5, n_bits=4):
+  print("Ua unit test")
+  print("Number of bits: {:d}".format(n_bits))
+  n = n_bits
+  n_qubits = [n, 2*n+2]
+
+  for _ in range(n_tests):
+    ## Pick random integers.
+    N = np.random.randint(2 ** (n-1), 2 ** n)
+    a = N
+    while np.gcd(a, N) != 1:
+      a = np.random.randint(2, N)
+    x = np.random.randint(N)
+
+    inputs = [x, 0]
+    expected_outputs = [(x*a)%N, 0]
+    if unit_test(Ua(n, a, N), n_qubits, inputs, expected_outputs):
+      print("PASS: {:2d} * {:2d} = {:3d} (mod {:d})".format(x, a, (x*a)%N, N))
+    else:
+      break
+  print()
 
 
 def mexp_unit_test(n_tests=5, n_bits=4):
-    
   print("MExp unit test")
-  print("Number of bits: {0:d}".format(n_bits))
-    
+  print("Number of bits: {:d}".format(n_bits))
   m = n_bits
   n = n_bits
-  k = cirq.GridQubit.rect(1, m, top=0)
-  b = cirq.GridQubit.rect(1, n, top=1)
-  anc = cirq.GridQubit.rect(1, 2*n+2, top=2)
-  
-  for i_test in range(n_tests):
-      
+  n_qubits = [m, n, 2*n+2]
+
+  for _ in range(n_tests):
     ## Pick random integers.
-    N_int = np.random.randint( 2 ** (n-1), 2 ** n)
-    k_int = np.random.randint( 2 ** (m-1), 2 ** m)
-    a_int = N_int
-    while np.gcd(a_int, N_int) != 1:
-      a_int = np.random.randint(2, N_int)
-    b_int = np.random.randint(N_int)
+    N = np.random.randint(2 ** (n-1), 2 ** n)
+    a = N
+    while np.gcd(a, N) != 1:
+      a = np.random.randint(2, N)
+    x = np.random.randint(N)
+    k = np.random.randint(2 ** m)
 
-    circuit = cirq.Circuit()
-    circuit.append(utils.prepare_state(k, k_int))
-    circuit.append(utils.prepare_state(b, b_int))
-    circuit.append(MExp(m, n, a_int, N_int).on(*k, *b, *anc))
-    circuit.append(cirq.measure(*k, *b, *anc))
-
-    ## Run one measurement and interpret result.
-    result = cirq.Simulator().run(circuit, repetitions=1)
-    for key in result.measurements:
-      out_array = result.measurements[key][0]
-      k_out = utils.bits_to_integer(out_array[:m])
-      b_out = utils.bits_to_integer(out_array[m:m+n])
-      anc_out = utils.bits_to_integer(out_array[m+n:])
-
-      b_exp = (b_int * pow(a_int, k_int, N_int)) % N_int
-      assert k_out == k_int, "k qubits must be unchanged."
-      assert b_out == b_exp, "Incorrect product. (output={}, expected={})".format(b_out, b_exp)
-      assert anc_out == 0, "Ancillary qubits must be unchanged."
-      print("Test {:2d}/{:d} PASSED: {:2d} * ({:2d} ** {:2d}) = {:2d} (mod {:2d})".format(
-        i_test+1, n_tests, b_int, a_int, k_int, b_out, N_int
-      ))
-      
+    inputs = [k, x, 0]
+    expected_outputs = [k, (x*pow(a, k, N))%N, 0]
+    if unit_test(MExp(m, n, a, N), n_qubits, inputs, expected_outputs):
+      print("PASS: {:2d} * ({:2d} ** {:2d}) = {:3d} (mod {:d})".format(x, a, k, (x*pow(a, k, N))%N, N))
+    else:
+      break
   print()
-  return True
         
 
 if __name__ == "__main__":
   
-  assert add_unit_test()
-  assert madd_unit_test()
-  assert mmult_unit_test()
-  assert mexp_unit_test()
+  add_unit_test()
+  madd_unit_test()
+  mmult_unit_test()
+  ua_unit_test()
+  mexp_unit_test()

@@ -6,7 +6,7 @@ import utils
 
 
 class OrderFinder(object):
-  '''Brute force order finder. Must have gcd(a, N) = 1. '''
+  '''Brute force order finder in O(N). Must have gcd(a, N) = 1. '''
 
   def __init__(self, a, N):
     assert np.gcd(a, N) == 1
@@ -22,10 +22,10 @@ class OrderFinder(object):
     
 
 class QuantumOrderFinder(OrderFinder):
-  '''Order finding by simulating quantum circuit. Since the measurement is
-  probabilistic, in order to avoid mistaking 2*r, 3*r, ... for the order, any
-  measurement must be obtained at least [THRESHOLD] times before it is
-  considered. '''
+  '''Order finding in O((log N)^3) by simulating quantum circuit. Since the
+  measurement is probabilistic, in order to avoid mistaking 2*r, 3*r, ... for
+  the actual order, any candidate for r must be measured at least [THRESHOLD]
+  times before it is considered. '''
   
   def __init__(self, a, N, THRESHOLD=2):
     super().__init__(a, N)
@@ -81,7 +81,8 @@ class QuantumOrderFinder(OrderFinder):
 class FakeQuantumOrderFinder(QuantumOrderFinder):
   '''Order finding by sampling the known output distribution of the quantum
   circuit. This mimics the behavior of QuantumOrderFinder without simulating the
-  quantum circuit, which is slow.'''
+  quantum circuit, which is slow on a classical computer. This method is O(N)
+  and is no faster than brute force.'''
     
   def __init__(self, a, N, THRESHOLD=2):
     super().__init__(a, N, THRESHOLD)
