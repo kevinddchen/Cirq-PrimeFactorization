@@ -98,26 +98,22 @@ class FakeQuantumOrderFinder(QuantumOrderFinder):
     of = OrderFinder(a, N)
     self.r = of.find()
       
-  def f(self, C, x):
-    '''f(x) = [sin^2(Cx)] / [C sin(x)]^2. '''
-    if np.sin(x) == 0:
-      return 1
-    else:
-      return (np.sin(C*x) ** 2) / ((C*np.sin(x)) ** 2)
+  def distribution(self, M, x, eps=1e-12):
+    '''f(x) = sin^2(Mx) / [M sin(x)]^2. '''
+    x = np.maximum(np.abs(x), eps) # regularize behavior at x=0
+    return (np.sin(M*x) ** 2) / ((M*np.sin(x)) ** 2)
       
   def sample(self):
     '''Sample directly from known distribution.'''
     M = 2 ** self.m
     k = np.random.randint(self.r)
-    probs = np.zeros(M)
-    for j in range(M):
-      delta = np.pi * (k*1./self.r - j*1./M)
-      probs[j] = self.f(M, delta)
+    deltas = np.pi * (k*1./self.r - np.linspace(0, 1, M, endpoint=False))
+    probs = self.distribution(M, deltas)
     return np.random.choice(M, p=probs)
 
   def find(self):
     print("FAKE QUANTUM CIRCUIT")
-    super().find()
+    return super().find()
 
 
 ## ========================
@@ -172,10 +168,14 @@ if __name__ == "__main__":
   
   ## Test quantum order finder.
   of = QuantumOrderFinder(3, 7)
-  of.find()
+  #of.find()
   print()
 
   ## Test classical parts of quantum order finder
+  of = FakeQuantumOrderFinder(3, 7)
+  of.find()
+  print()
+
   for i in range(3):
 
     N = np.random.randint(2 ** 7, 2 ** 8)
