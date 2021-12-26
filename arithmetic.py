@@ -179,7 +179,6 @@ class Ua(cirq.Gate):
     if inv_a:
       self.inv_a = inv_a
     else:
-      assert np.gcd(a, N) == 1, "Must have gcd(a, N) = 1."
       self.inv_a = pow(a, -1, N)
   
   def _num_qubits_(self):
@@ -224,7 +223,6 @@ class MExp(cirq.Gate):
     self.m = m
     self.n = n
     self.a = a
-    assert np.gcd(a, N) == 1, "Must have gcd(a, N) = 1."
     self.inv_a = pow(a, -1, N) # inverse of a mod N
     self.N = N
   

@@ -81,7 +81,7 @@ class QuantumOrderFinder(OrderFinder):
       ## if a q is observed [THRESHOLD] times, check if it is the order.
       if self._q_dict[q] == self.THRESHOLD:
         if pow(self.a, q, self.N) == 1:
-          print("Found order r={:d}!".format(q))
+          print("Found order r={:d}!\n".format(q))
           return q
         else:
           print("q={:d} is not the order. Continuing ...".format(q))
@@ -89,9 +89,9 @@ class QuantumOrderFinder(OrderFinder):
 
 class FakeQuantumOrderFinder(QuantumOrderFinder):
   '''Order finding by sampling the known output distribution of the quantum
-  circuit. This mimics the behavior of `QuantumOrderFinder` without simulating
-  the quantum circuit, which is slow on a classical computer. This method is no
-  faster than brute force.'''
+  phase estimation circuit. This mimics the exact output of `QuantumOrderFinder`
+  without simulating the quantum circuit, which is slow on a classical computer.
+  However, this method is no faster than brute force.'''
     
   def __init__(self, a, N, THRESHOLD=2):
     super().__init__(a, N, THRESHOLD)
@@ -168,13 +168,11 @@ if __name__ == "__main__":
   
   ## Test quantum order finder.
   of = QuantumOrderFinder(3, 7)
-  #of.find()
-  print()
+  of.find()
 
   ## Test classical parts of quantum order finder
   of = FakeQuantumOrderFinder(3, 7)
   of.find()
-  print()
 
   for i in range(3):
 
@@ -184,4 +182,3 @@ if __name__ == "__main__":
       a = np.random.randint(2, N)
     of = FakeQuantumOrderFinder(a, N)
     of.find()
-    print()
