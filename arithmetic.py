@@ -1,11 +1,14 @@
 import cirq
 import numpy as np
+
 import utils
 
 
 ## Quantum gates for arithmetic.
 ## Implementation based on https://arxiv.org/abs/quant-ph/9511018.
-## TODO: try QFT-based gates in https://arxiv.org/abs/quant-ph/0205095. May be more efficient.
+
+## Note: an integer a = 2^(n-1) a_(n-1) + ... + 2 a_1 + a_0 is represented 
+## by n qubits with the convention that the nth qubit represents a_n.
 
 
 class Add(cirq.Gate):
@@ -142,7 +145,7 @@ class MMult(cirq.Gate):
     b = qubits[n:2*n]
     anc = qubits[2*n:]
 
-    ## x*a = (2^(n-1) x_(n-1) a + ... + 2 x_1 a + x_0 a)
+    ## x*a = 2^(n-1) x_(n-1) a + ... + 2 x_1 a + x_0 a
     ## so the bits of x control the addition of a * 2^i
     d = self.a # stores a * 2^i mod N
     for i in range(n):
@@ -160,7 +163,7 @@ class Ua(cirq.Gate):
 
   Parameters: 
     n: number of qubits. 
-    a: integer, 0 <= a < N and gcd(a, N) = 1.
+    a: integer, 0 < a < N and gcd(a, N) = 1.
     N: integer, 1 < N < 2^n.
     inv_a: (optional) integer, inverse of a mod N. Skips recalculation of this if provided.
 
@@ -208,7 +211,7 @@ class MExp(cirq.Gate):
   Parameters: 
     m: number of qubits for k.
     n: number of qubits for x. 
-    a: integer, 1 <= a < N and gcd(a, N) = 1.
+    a: integer, 0 < a < N and gcd(a, N) = 1.
     N: integer, 1 < N < 2^n.
 
   Input to gate is m+3n+2 qubits split into: 

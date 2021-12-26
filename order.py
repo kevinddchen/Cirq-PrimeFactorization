@@ -6,7 +6,12 @@ import utils
 
 
 class OrderFinder(object):
-  '''Brute force order finder in O(N). Must have gcd(a, N) = 1. '''
+  '''Brute force order finding in O(N).  
+  
+  Parameters:
+    a: integer, 1 < a < N and gcd(a, N) = 1.
+    N: integer. 
+  '''
 
   def __init__(self, a, N):
     assert np.gcd(a, N) == 1
@@ -22,17 +27,20 @@ class OrderFinder(object):
     
 
 class QuantumOrderFinder(OrderFinder):
-  '''Order finding in O((log N)^3) by simulating quantum circuit. Since the
-  measurement is probabilistic, in order to avoid mistaking 2*r, 3*r, ... for
-  the actual order, any candidate for r must be measured at least [THRESHOLD]
-  times before it is considered. '''
+  '''Order finding in O((log N)^3) by quantum phase estimation.
+  
+  Since the measurement for the order is probabilistic, in order to avoid
+  mistaking 2*r, 3*r, ... for the actual order, any candidate must be measured
+  at least `THRESHOLD` times before it is considered. But since this is very
+  unlikely, having `THRESHOLD=2` should be sufficient.
+  '''
   
   def __init__(self, a, N, THRESHOLD=2):
     super().__init__(a, N)
     self.THRESHOLD = THRESHOLD
-    self.n = int(np.log2(N)) + 1 
+    self.n = int(np.log2(N)) + 1 # number of bits to represent N
     self.m = 2 * self.n
-    self._r_dict = {}
+    self._q_dict = {}
     
     ## Prepare quantum circuit that performs phase estimation on MExp.
     k = cirq.GridQubit.rect(1, self.m, top=0)
@@ -47,10 +55,9 @@ class QuantumOrderFinder(OrderFinder):
       
   def sample(self):
     '''Runs quantum circuit once and returns a measurement.'''
-    results = cirq.Simulator().run(self.circuit, repetitions=1)
-    for key in results.measurements:
-      out_array = results.measurements[key][0]
-    return utils.bits_to_integer(out_array)
+    result = cirq.Simulator().run(self.circuit, repetitions=1)
+    _, raw_output = result.measurements.popitem()
+    return utils.bits_to_integer(raw_output[0])
       
   def find(self):
     print("Finding order of {:d} modulo {:d} ...".format(self.a, self.N))
@@ -59,30 +66,32 @@ class QuantumOrderFinder(OrderFinder):
     i = 0
     while True:
       i += 1
-      j = self.sample()
+      j = self.sample() # j drawn from [0, 2^m)
       _, q = approximate_fraction(j, 2 ** self.m, self.N)
-      print("Iteration {:d}: {:d}".format(i, q))
+      ## _/q is drawn uniformly from k/r where k=0, 1, ..., r-1.
 
-      ## _r_dict stores all denominators.
-      ## if a denominator is observed [THRESHOLD] times, check if it is the order.
-      if q in self._r_dict:
-        self._r_dict[q] += 1
+      print("Iteration {:d}: q={:d}".format(i, q))
+
+      ## _q_dict stores all qs.
+      if q in self._q_dict:
+        self._q_dict[q] += 1
       else:
-        self._r_dict[q] = 1
+        self._q_dict[q] = 1
 
-      if self._r_dict[q] == self.THRESHOLD:
+      ## if a q is observed [THRESHOLD] times, check if it is the order.
+      if self._q_dict[q] == self.THRESHOLD:
         if pow(self.a, q, self.N) == 1:
           print("Found order r={:d}!".format(q))
           return q
         else:
-          print("r={:d} is not the order. Continuing ...".format(q))
+          print("q={:d} is not the order. Continuing ...".format(q))
 
 
 class FakeQuantumOrderFinder(QuantumOrderFinder):
   '''Order finding by sampling the known output distribution of the quantum
-  circuit. This mimics the behavior of QuantumOrderFinder without simulating the
-  quantum circuit, which is slow on a classical computer. This method is O(N)
-  and is no faster than brute force.'''
+  circuit. This mimics the behavior of `QuantumOrderFinder` without simulating
+  the quantum circuit, which is slow on a classical computer. This method is no
+  faster than brute force.'''
     
   def __init__(self, a, N, THRESHOLD=2):
     super().__init__(a, N, THRESHOLD)
@@ -169,7 +178,7 @@ if __name__ == "__main__":
   ## Test classical parts of quantum order finder
   for i in range(3):
 
-    N = np.random.randint( 2 ** 7, 2 ** 8 )
+    N = np.random.randint(2 ** 7, 2 ** 8)
     a = N
     while np.gcd(a, N) != 1:
       a = np.random.randint(2, N)
