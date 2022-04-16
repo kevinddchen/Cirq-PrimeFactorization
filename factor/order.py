@@ -115,11 +115,6 @@ class FakeQuantumOrderFinder(QuantumOrderFinder):
     return super().find()
 
 
-## ========================
-## HELPER FUNCTIONS =======
-## ========================
-
-
 def _continued_fraction(p, q):
   '''Given p/q, return its continued fraction as a sequence.'''
   while q != 0:
@@ -156,28 +151,3 @@ def _approximate_fraction(p, q, N):
           a1, b1 = next_a, next_b
     ## else, no better approximation
   return a1, b1
-
-
-## ========================
-## UNIT TESTS =============
-## ========================
-
-
-if __name__ == "__main__":
-  
-  ## Test quantum order finder.
-  of = QuantumOrderFinder(3, 7)
-  of.find()
-
-  ## Test classical parts of quantum order finder
-  of = FakeQuantumOrderFinder(3, 7)
-  of.find()
-
-  for i in range(3):
-
-    N = np.random.randint(2 ** 7, 2 ** 8)
-    a = N
-    while np.gcd(a, N) != 1:
-      a = np.random.randint(2, N)
-    of = FakeQuantumOrderFinder(a, N)
-    of.find()

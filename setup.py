@@ -10,4 +10,7 @@ setup(
     install_requires=[
         "cirq==0.13.1",
     ],
+    extras_require={
+        "dev": ["pytest"],
+    },
 )
