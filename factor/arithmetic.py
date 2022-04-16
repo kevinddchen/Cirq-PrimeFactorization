@@ -1,7 +1,7 @@
 import cirq
 import numpy as np
 
-import utils
+from factor import utils
 
 
 ## Quantum gates for arithmetic.

@@ -1,8 +1,7 @@
 import cirq
 import numpy as np
 
-from arithmetic import MExp
-import utils
+from factor import MExp, utils
 
 
 class OrderFinder(object):
@@ -67,7 +66,7 @@ class QuantumOrderFinder(OrderFinder):
     while True:
       i += 1
       j = self.sample() # j drawn from [0, 2^m)
-      _, q = approximate_fraction(j, 2 ** self.m, self.N)
+      _, q = _approximate_fraction(j, 2 ** self.m, self.N)
       ## _/q is drawn uniformly from k/r where k=0, 1, ..., r-1.
 
       print("Iteration {:d}: q={:d}".format(i, q))
@@ -121,7 +120,7 @@ class FakeQuantumOrderFinder(QuantumOrderFinder):
 ## ========================
 
 
-def continued_fraction(p, q):
+def _continued_fraction(p, q):
   '''Given p/q, return its continued fraction as a sequence.'''
   while q != 0:
     a = p // q
@@ -129,13 +128,13 @@ def continued_fraction(p, q):
     p, q = q, p - q*a
 
 
-def approximate_fraction(p, q, N):
+def _approximate_fraction(p, q, N):
   '''Given p/q, find the closest fraction a/b where b < N. Returns a tuple (a, b).'''
   ## truncate continued fraction expansion when denominator >= N
   a1, a2 = 1, 0
   b1, b2 = 0, 1
   truncated = False
-  for k in continued_fraction(p, q):
+  for k in _continued_fraction(p, q):
     if k*b1 + b2 >= N:
       truncated = True
       break

@@ -1,6 +1,6 @@
 import numpy as np
 
-import order
+from factor import FakeQuantumOrderFinder, QuantumOrderFinder
 
 
 def shor(N, debug=False):
@@ -33,9 +33,9 @@ def shor(N, debug=False):
     
     ## if debug mode, use FakeQuantumOrderFinder
     if debug:
-      of = order.FakeQuantumOrderFinder(a, N)
+      of = FakeQuantumOrderFinder(a, N)
     else:
-      of = order.QuantumOrderFinder(a, N)
+      of = QuantumOrderFinder(a, N)
 
     ## find period of a modulo N
     r = of.find()
