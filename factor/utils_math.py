@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+
 
 def modular_inverse(a: int, N: int) -> int:
     """Return the inverse of `a` modulo `N`.
@@ -79,3 +81,40 @@ def approximate_fraction(p: int, q: int, N: int) -> tuple[int, int]:
 
     # else, no better approximation
     return a1, b1
+
+
+def is_prime(n: int, num_iters: int = 40) -> bool:
+    """Returns True if n is a probable prime. Implementation uses a
+    Miller-Rabin primality test modified from
+    https://gist.github.com/Ayrx/5884790.
+
+    Args:
+        n: The number to test.
+        num_iters: The number of iterations to run.
+
+    Returns:
+        True if n is a probable prime.
+    """
+
+    if n == 2 or n == 3:
+        return True
+
+    if n % 2 == 0:
+        return False
+
+    r, s = 0, n - 1
+    while s % 2 == 0:
+        r += 1
+        s //= 2
+    for _ in range(num_iters):
+        a = np.random.randint(2, n - 1)
+        x = pow(a, s, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True

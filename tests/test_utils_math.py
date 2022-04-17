@@ -1,6 +1,6 @@
 import pytest
 
-from factor import modular_inverse, continued_fraction, approximate_fraction
+from factor import modular_inverse, continued_fraction, approximate_fraction, is_prime
 
 
 def test_modular_inverse():
@@ -43,3 +43,19 @@ def test_approximate_fraction():
     assert approximate_fraction(11, 13, 7) == (6, 7)
     assert approximate_fraction(12, 13, 7) == (6, 7)
     assert approximate_fraction(13, 13, 7) == (1, 1)
+
+
+def test_is_prime():
+    assert is_prime(2)
+    assert is_prime(3)
+    assert not is_prime(4)
+    assert is_prime(5)
+    assert not is_prime(6)
+    assert is_prime(7)
+    assert not is_prime(8)
+    assert not is_prime(9)
+    assert is_prime(101)
+    assert not is_prime(17 * 59)
+    assert is_prime(1009)
+    assert is_prime(1_000_003)
+    assert not is_prime(101 * 1009)
