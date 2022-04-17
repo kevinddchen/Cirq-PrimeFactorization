@@ -106,7 +106,12 @@ def test_ua():
 
             logging.info(f"Ua - {n} bits - ({x} * {a}) % {N}")
 
-            _eval(gate=Ua(n, a, N), register_lengths=[n, 2 * n + 2], inputs=[x, 0], expected_outputs=[(x * a) % N, 0])
+            _eval(
+                gate=Ua(n, a, N),
+                register_lengths=[n, 2 * n + 2],
+                inputs=[x, 0],
+                expected_outputs=[(x * a) % N, 0],
+            )
 
 
 def test_mexp():

@@ -1,35 +1,35 @@
+from __future__ import annotations
+
 import cirq
 
-from factor import utils
+from factor import integer_to_bits, modular_inverse
 
 
-# Quantum gates for arithmetic.
-# Implementation based on https://arxiv.org/abs/quant-ph/9511018.
+# Quantum gates for arithmetic. Implementations are based on
+# https://arxiv.org/abs/quant-ph/9511018.
 
 # Note: an integer a = 2^(n-1) a_(n-1) + ... + 2 a_1 + a_0 is represented
 # by n bits with the convention that the ith bit is a_i.
 
 
 class Add(cirq.Gate):
-    """Add classical integer a to qubit b. To account for possible overflow, an
-    extra qubit (initialized to zero) must be supplied for b. Uses O(n) elementary
-    gates.
+    def __init__(self, n: int, a: int):
+        """Add classical integer a to qubit b. Uses O(n) elementary gates.
 
-      |b> --> |b+a>
+        |b> --> |b+a>
 
-    Parameters:
-      n: number of qubits.
-      a: integer, 0 <= a < 2^n.
+        The input to the gate is 2n+1 qubits split into two registers:
+        - n+1 qubits for b, 0 <= b < 2 ** n. The most significant digit must be
+          initialized to 0. b+a is saved here.
+        - n qubits initialized to 0. These are unchanged by the gate.
 
-    Input to gate is 2n+1 qubits split into:
-      n+1 qubits for b, 0 <= b < 2^n. The most significant digit is initialized to 0. b+a is saved here.
-      n ancillary qubits initialized to 0. Unchanged by operation.
-    """
-
-    def __init__(self, n, a):
+        Args:
+            n: number of qubits.
+            a: 0 <= a < 2 ** n.
+        """
         super().__init__()
         self.n = n
-        self.a = a
+        self.a_bits = integer_to_bits(n_bits=n, x=a)
 
     def _num_qubits_(self):
         return 2 * self.n + 1
@@ -38,22 +38,20 @@ class Add(cirq.Gate):
         return ["Add_b"] * (self.n + 1) + ["Add_anc"] * self.n
 
     def _decompose_(self, qubits):
-        n = self.n
-        a = utils.integer_to_bits(n, self.a)
-        b = qubits[:n]
-        anc = qubits[n + 1 :] + (qubits[n],)  # internally, b[n] is placed in anc[n]
+        b = qubits[: self.n]
+        anc = qubits[self.n + 1 :] + (qubits[self.n],)  # internally, b[n] is placed in anc[n]
 
         # In forward pass, store carried bits in ancilla.
-        for i in range(n):
-            if a[i]:
+        for i in range(self.n):
+            if self.a_bits[i]:
                 yield cirq.CNOT(b[i], anc[i + 1])
                 yield cirq.X(b[i])
             yield cirq.TOFFOLI(anc[i], b[i], anc[i + 1])
-        yield cirq.CNOT(anc[n - 1], b[n - 1])
+        yield cirq.CNOT(anc[self.n - 1], b[self.n - 1])
         # In backward pass, undo carries, then add a and carries to b.
-        for i in range(n - 2, -1, -1):
+        for i in range(self.n - 2, -1, -1):
             yield cirq.TOFFOLI(anc[i], b[i], anc[i + 1])
-            if a[i]:
+            if self.a_bits[i]:
                 yield cirq.X(b[i])
                 yield cirq.CNOT(b[i], anc[i + 1])
                 yield cirq.X(b[i])
@@ -61,22 +59,21 @@ class Add(cirq.Gate):
 
 
 class MAdd(cirq.Gate):
-    """Add classical integer a to qubit b, modulo N. Integers a and b must be less
-    than N for correct behavior. Uses O(n) elementary gates.
+    def __init__(self, n: int, a: int, N: int):
+        """Add classical integer a to qubit b, modulo N. Integers a and b must
+        be less than N for correct behavior. Uses O(n) elementary gates.
 
-      |b> --> |b+a mod N>
+        |b> --> |b+a mod N>
 
-    Parameters:
-      n: number of qubits.
-      a: integer, 0 <= a < N.
-      N: integer, 1 < N < 2^n.
+        Input to the gate is 2n+2 qubits split into two registers:
+        - n qubits for b, 0 <= b < N. a+b mod N is saved here.
+        - n+2 qubits initialized to 0. These are unchanged by the gate.
 
-    Input to gate is 2n+2 qubits split into:
-      n qubits for b, 0 <= b < N. a+b mod N is saved here.
-      n+2 ancillary qubits initialized to 0. Unchanged by operation.
-    """
-
-    def __init__(self, n, a, N):
+        Args:
+            n: number of qubits.
+            a: 0 <= a < N.
+            N: 1 < N < 2 ** n.
+        """
         super().__init__()
         self.n = n
         self.a = a
@@ -89,46 +86,43 @@ class MAdd(cirq.Gate):
         return ["MAdd_b"] * self.n + ["MAdd_anc"] * (self.n + 2)
 
     def _decompose_(self, qubits):
-        n = self.n
-        b = qubits[: n + 1]  # extra qubit for overflow
-        anc = qubits[n + 1 : 2 * n + 1]
-        t = qubits[2 * n + 1]
+        b = qubits[: self.n + 1]  # extra qubit for overflow
+        anc = qubits[self.n + 1 : 2 * self.n + 1]
+        t = qubits[2 * self.n + 1]
 
-        Add_a = Add(n, self.a)
-        Add_N = Add(n, self.N)
+        Add_a = Add(self.n, self.a)
+        Add_N = Add(self.n, self.N)
         yield Add_a.on(*b, *anc)
         yield cirq.inverse(Add_N).on(*b, *anc)
         # Second register is a+b-N. The most significant digit indicates underflow from subtraction.
-        yield cirq.CNOT(b[n], t)
+        yield cirq.CNOT(b[self.n], t)
         yield Add_N.controlled(1).on(t, *b, *anc)
         # To reset t, subtract a from second register. If underflow again, means that t=0 previously.
         yield cirq.inverse(Add_a).on(*b, *anc)
-        yield cirq.X(b[n])
-        yield cirq.CNOT(b[n], t)
-        yield cirq.X(b[n])
+        yield cirq.X(b[self.n])
+        yield cirq.CNOT(b[self.n], t)
+        yield cirq.X(b[self.n])
         yield Add_a.on(*b, *anc)
 
 
 class MMult(cirq.Gate):
-    """Multiply qubit x by classical integer a, modulo N. Exact map is:
+    def __init__(self, n: int, a: int, N: int):
+        """Multiply qubit x by classical integer a, modulo N. Integers a, b,
+        and x must be less than N for correct behavior. Uses O(n^2)
+        elementary gates.
 
-      |x; b> --> |x; b + x*a mod N>
+        |x; b> --> |x; b + x*a mod N>
 
-    Integers a, b, and x must be less than N for correct behavior. Uses O(n^2)
-    elementary gates.
+        Input to the gate is 3n+2 qubits split into three registers:
+        - n qubits for x, 0 <= x < N. These are unchanged by the gate.
+        - n qubits for b, 0 <= b < N. b + x*a mod N is saved here.
+        - n+2 qubits initialized to 0. These are unchanged by the gate.
 
-    Parameters:
-      n: number of qubits.
-      a: integer, 0 <= a < N.
-      N: integer, 1 < N < 2^n.
-
-    Input to gate is 3n+2 qubits split into:
-      n qubits for x, 0 <= x < N. Unchanged by operation.
-      n qubits for b, 0 <= b < N. b + x*a mod N is saved here.
-      n+2 ancillary qubits initialized to 0. Unchanged by operation.
-    """
-
-    def __init__(self, n, a, N):
+        Args:
+            n: number of qubits.
+            a: 0 <= a < N.
+            N: 1 < N < 2 ** n.
+        """
         super().__init__()
         self.n = n
         self.a = a
@@ -141,40 +135,37 @@ class MMult(cirq.Gate):
         return ["MMult_x"] * self.n + ["MMult_b"] * self.n + ["MMult_anc"] * (self.n + 2)
 
     def _decompose_(self, qubits):
-        n = self.n
-        N = self.N
-        x = qubits[:n]
-        b = qubits[n : 2 * n]
-        anc = qubits[2 * n :]
+        x = qubits[: self.n]
+        b = qubits[self.n : 2 * self.n]
+        anc = qubits[2 * self.n :]
 
         # x*a = 2^(n-1) x_(n-1) a + ... + 2 x_1 a + x_0 a
         # so the bits of x control the addition of a * 2^i
         d = self.a  # stores a * 2^i mod N
-        for i in range(n):
-            yield MAdd(n, d, N).controlled(1).on(x[i], *b, *anc)
-            d = (d << 1) % N
+        for i in range(self.n):
+            yield MAdd(self.n, d, self.N).controlled(1).on(x[i], *b, *anc)
+            d = (d << 1) % self.N
 
 
 class Ua(cirq.Gate):
-    """Applies the unitary n-qubit operation,
+    def __init__(self, n: int, a: int, N: int, inv_a: int | None = None):
+        """Multiply qubit x by classical integer a, modulo N, where
+        gcd(a, N) = 1. Similar to `MMult`, but acts on the x qubits directly.
+        Integers a and x must be less than N for correct behavior. Uses O(n^2)
+        elementary gates.
 
-      |x> --> |x*a mod N>
+        |x> --> |x*a mod N>
 
-    where gcd(a, N) = 1. Integers a and x must be less than N for correct
-    behavior. Uses O(n^2) elementary gates.
+        Input to the gate is 3n+2 qubits split into two registers:
+        - n qubits for x, 0 <= x < N. x*a mod N is saved here.
+        - 2n+2 qubits initialized to 0. These are unchanged by the gate.
 
-    Parameters:
-      n: number of qubits.
-      a: integer, 0 < a < N and gcd(a, N) = 1.
-      N: integer, 1 < N < 2^n.
-      inv_a: (optional) integer, inverse of a mod N. Skips recalculation of this if provided.
-
-    Input to gate is 3n+2 qubits split into:
-      n qubits for x, 0 <= x < N. x*a mod N is saved here.
-      2n+2 ancillary qubits initialized to 0. Unchanged by operation.
-    """
-
-    def __init__(self, n, a, N, inv_a=None):
+        Args:
+            n: number of qubits.
+            a: 0 < a < N and gcd(a, N) = 1.
+            N: 1 < N < 2 ** n.
+            inv_a: inverse of a mod N. If None, will be computed.
+        """
         super().__init__()
         self.n = n
         self.a = a
@@ -182,7 +173,7 @@ class Ua(cirq.Gate):
         if inv_a:
             self.inv_a = inv_a
         else:
-            self.inv_a = pow(a, -1, N)
+            self.inv_a = modular_inverse(a=a, N=N)
 
     def _num_qubits_(self):
         return 3 * self.n + 2
@@ -191,43 +182,40 @@ class Ua(cirq.Gate):
         return ["Ua_x"] * self.n + ["Ua_anc"] * (2 * self.n + 2)
 
     def _decompose_(self, qubits):
-        n = self.n
-        N = self.N
-        x = qubits[:n]
-        anc_mult = qubits[n : 2 * n]
-        anc_add = qubits[2 * n :]
+        x = qubits[: self.n]
+        anc_mult = qubits[self.n : 2 * self.n]
+        anc_add = qubits[2 * self.n :]
 
-        yield MMult(n, self.a, N).on(*x, *anc_mult, *anc_add)
-        for i in range(n):
+        yield MMult(self.n, self.a, self.N).on(*x, *anc_mult, *anc_add)
+        for i in range(self.n):
             yield cirq.SWAP(x[i], anc_mult[i])
-        yield cirq.inverse(MMult(n, self.inv_a, N)).on(*x, *anc_mult, *anc_add)
+        yield cirq.inverse(MMult(self.n, self.inv_a, self.N)).on(*x, *anc_mult, *anc_add)
 
 
 class MExp(cirq.Gate):
-    """Multiply qubit x by a^k, modulo N, where a is a classical integer and
-    gcd(a, N) = 1. Integers a and x must be less than N for correct behavior. Uses
-    O(m * n^2) elementary gates.
+    def __init__(self, m: int, n: int, a: int, N: int):
+        """Multiply qubit x by a^k, modulo N, where a is classical integer and
+        gcd(a, N) = 1. Integers a and x must be less than N for correct
+        behavior. Uses O(m * n^2) elementary gates.
 
-      |k; x> --> |k; x * a^k mod N>
+        |k; x> --> |k; x * a^k mod N>
 
-    Parameters:
-      m: number of qubits for k.
-      n: number of qubits for x.
-      a: integer, 0 < a < N and gcd(a, N) = 1.
-      N: integer, 1 < N < 2^n.
+        Input to the gate is m+3n+2 qubits split into three registers:
+        - m qubits for k, 0 <= k < 2^m. These are unchanged by the gate.
+        - n qubits for x, 0 <= x < N. x * a^k mod N is saved here.
+        - 2n+2 qubits initialized to 0. These are unchanged by the gate.
 
-    Input to gate is m+3n+2 qubits split into:
-      m qubits for k, 0 <= k < 2^m. Unchanged by operation.
-      n qubits for x, 0 <= x < N. x * a^k mod N is saved here.
-      2n+2 ancillary qubits initialized to 0. Unchanged by operation.
-    """
-
-    def __init__(self, m, n, a, N):
+        Args:
+            m: number of qubits for k.
+            n: number of qubits for x.
+            a: 0 < a < N and gcd(a, N) = 1.
+            N: 1 < N < 2 ** n.
+        """
         super().__init__()
         self.m = m
         self.n = n
         self.a = a
-        self.inv_a = pow(a, -1, N)  # inverse of a mod N
+        self.inv_a = modular_inverse(a=a, N=N)
         self.N = N
 
     def _num_qubits_(self):
@@ -237,16 +225,13 @@ class MExp(cirq.Gate):
         return ["MExp_k"] * self.m + ["MExp_x"] * self.n + ["MExp_anc"] * (2 * self.n + 2)
 
     def _decompose_(self, qubits):
-        m = self.m
-        n = self.n
-        N = self.N
-        k = qubits[:m]
-        x = qubits[m : m + n]
-        anc = qubits[m + n :]
+        k = qubits[: self.m]
+        x = qubits[self.m : self.m + self.n]
+        anc = qubits[self.m + self.n :]
 
         d = self.a  # stores a^(2^i)
         inv_d = self.inv_a  # stores a^(-2^i)
-        for i in range(m):
-            yield Ua(n, d, N, inv_d).controlled(1).on(k[i], *x, *anc)
-            d = (d * d) % N
-            inv_d = (inv_d * inv_d) % N
+        for i in range(self.m):
+            yield Ua(self.n, d, self.N, inv_a=inv_d).controlled(1).on(k[i], *x, *anc)
+            d = (d * d) % self.N
+            inv_d = (inv_d * inv_d) % self.N
