@@ -1,3 +1,27 @@
+# Project settings ------------------------------------------------------------
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Test settings ---------------------------------------------------------------
+
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
+
+# Pre-commit hooks settings ---------------------------------------------------
+
+[tool.black]
+line-length = 120
+target-version = ["py38"]
+
+[flake8]
+max-line-length = 120
+ignore = """
+    E203,
+"""
+exclude = ".git,__pycache__,build,dist"
+per-file-ignores = """
+    __init__.py: F401
+"""

@@ -162,3 +162,4 @@ cython_debug/
 # Custom
 
 .DS_STORE
+.pre-commit-config.yaml
