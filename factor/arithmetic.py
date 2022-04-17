@@ -7,7 +7,7 @@ from factor import utils
 # Implementation based on https://arxiv.org/abs/quant-ph/9511018.
 
 # Note: an integer a = 2^(n-1) a_(n-1) + ... + 2 a_1 + a_0 is represented
-# by n qubits with the convention that the nth qubit represents a_n.
+# by n bits with the convention that the ith bit is a_i.
 
 
 class Add(cirq.Gate):
