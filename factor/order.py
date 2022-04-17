@@ -68,7 +68,8 @@ class QuantumOrderFinder(OrderFinder):
                 raising a `RuntimeError`.
 
         Raises:
-            RuntimeError: if the circuit exceeds `max_iters` times.
+            RuntimeError: if the order was not found after `max_iters`
+                iterations.
         """
         super().__init__(a, N)
         self.threshold = threshold
