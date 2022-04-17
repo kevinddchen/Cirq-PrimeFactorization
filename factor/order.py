@@ -1,153 +1,149 @@
+from __future__ import annotations
+
+import logging
+from functools import cached_property
+
 import cirq
 import numpy as np
 
-from factor import MExp, utils
+from factor import MExp, approximate_fraction, size_in_bits, prepare_state, bits_to_integer
 
 
 class OrderFinder(object):
-    """Brute force order finding in O(N).
+    def __init__(self, a: int, N: int):
+        """Class that finds the multiplicative order of `a` modulo `N`.
 
-    Parameters:
-      a: integer, 1 < a < N and gcd(a, N) = 1.
-      N: integer.
-    """
+        Args:
+            a: The number to find the order of. Must satisfy 0 < a < N and
+                gcd(a, N) = 1.
+            N: The modulus. Must be > 1.
 
-    def __init__(self, a, N):
-        assert np.gcd(a, N) == 1
+        Raises:
+            ValueError: if any of the conditions above are not met.
+        """
+        if not (0 < a and a < N and np.gcd(a, N) == 1):
+            msg = f"OrderFinder: invalid arguments a={a} and N={N}."
+            raise ValueError(msg)
         self.a = a
         self.N = N
 
-    def find(self):
-        """Find the order."""
+    @cached_property
+    def _order(self) -> int:
+        """Find the order by brute force. Runs in O(N) time."""
         d, r = self.a, 1
         while d != 1:
             d, r = (d * self.a) % self.N, r + 1
         return r
 
+    def find(self) -> int:
+        """Find the order."""
+        return self._order
+
 
 class QuantumOrderFinder(OrderFinder):
-    """Order finding in O((log N)^3) by quantum phase estimation.
+    def __init__(
+        self,
+        a: int,
+        N: int,
+        n_qubits: int | None = None,
+        threshold: int = 2,
+        max_iters: int = 100,
+    ):
+        """Order finding in O((log N)^3) by quantum phase estimation.
 
-    Since the measurement for the order is probabilistic, in order to avoid
-    mistaking 2*r, 3*r, ... for the actual order, any candidate must be measured
-    at least `THRESHOLD` times before it is considered. But since this is very
-    unlikely, having `THRESHOLD=2` should be sufficient.
-    """
+        Let `r` denote the order we are trying to find. The circuit is run
+        multiple times to generate candidate measurements for the order. To
+        avoid mistaking measurements of 2*r, 3*r, ... for the actual order, any
+        candidate must be measured at least `threshold` times before we
+        verify that it is the order. Having `threshold=2` should be sufficient.
 
-    def __init__(self, a, N, THRESHOLD=2):
+        Args:
+            a: The number to find the order of. Must satisfy 0 < a < N and
+                gcd(a, N) = 1.
+            N: The modulus. Must be > 1.
+            n_qubits: The number of qubits to use. If None, will be inferred.
+            threshold: The number of times a candidate must be measured before
+                it is verified.
+            max_iters: The maximum number of times to run the circuit before
+                raising a `RuntimeError`.
+
+        Raises:
+            RuntimeError: if the circuit exceeds `max_iters` times.
+        """
         super().__init__(a, N)
-        self.THRESHOLD = THRESHOLD
-        self.n = int(np.log2(N)) + 1  # number of bits to represent N
+        self.threshold = threshold
+        self.max_iters = max_iters
+        self.n = n_qubits or size_in_bits(N)
         self.m = 2 * self.n
-        self._q_dict = {}
+        self.candidates = dict()  # tracks candidate orders and their counts
 
         # Prepare quantum circuit that performs phase estimation on MExp.
         k = cirq.GridQubit.rect(1, self.m, top=0)
         x = cirq.GridQubit.rect(1, self.n, top=1)
         anc = cirq.GridQubit.rect(1, 2 * self.n + 2, top=2)
         self.circuit = cirq.Circuit()
-        self.circuit.append(utils.prepare_state(x, 1))
+        self.circuit.append(prepare_state(x, 1))
         self.circuit.append(cirq.H(ki) for ki in k)
         self.circuit.append(MExp(self.m, self.n, a, N).on(*k, *x, *anc))
         self.circuit.append(cirq.qft(*k[::-1], inverse=True))
         self.circuit.append(cirq.measure(*k))
 
-    def sample(self):
+    def _sample(self) -> int:
         """Runs quantum circuit once and returns a measurement."""
         result = cirq.Simulator().run(self.circuit, repetitions=1)
         _, raw_output = result.measurements.popitem()
-        return utils.bits_to_integer(raw_output[0])
+        bits = [int(x) for x in raw_output[0]]  # convert all to ints
+        return bits_to_integer(bits)
 
-    def find(self):
-        print("Finding order of {:d} modulo {:d} ...".format(self.a, self.N))
-        print("Running on n={:d} qubits ...".format(self.n))
-        print("(THRESHOLD={:d})".format(self.THRESHOLD))
-        i = 0
-        while True:
-            i += 1
-            j = self.sample()  # j drawn from [0, 2^m)
-            _, q = _approximate_fraction(j, 2**self.m, self.N)
-            # _/q is drawn uniformly from k/r where k=0, 1, ..., r-1.
+    def find(self) -> int:
+        """Find the order."""
+        logging.debug(f"Finding order of {self.a} modulo {self.N} ...")
+        logging.debug(f"Running on {self.n} qubits ...")
+        logging.debug(f"- threshold={self.threshold}")
+        logging.debug(f"- max_iters={self.max_iters}")
 
-            print("Iteration {:d}: q={:d}".format(i, q))
+        for iter in range(self.max_iters):
 
-            # _q_dict stores all qs.
-            if q in self._q_dict:
-                self._q_dict[q] += 1
-            else:
-                self._q_dict[q] = 1
+            j = self._sample()  # j drawn from [0, 2^m)
+            _, q = approximate_fraction(j, 2**self.m, self.N)  # _/q drawn uniformly from {0, 1/r, 2/r, ..., (r-1)/r}
+            logging.debug(f"\tMeasured candidate order q={q}")
 
-            # if a q is observed [THRESHOLD] times, check if it is the order.
-            if self._q_dict[q] == self.THRESHOLD:
+            self.candidates[q] = self.candidates.get(q, 0) + 1
+            # if a q is observed `threshold` times, check if it is the order.
+            if self.candidates[q] == self.threshold:
                 if pow(self.a, q, self.N) == 1:
-                    print("Found order r={:d}!\n".format(q))
+                    logging.debug(f"Found order r={q} in {iter+1} iterations.")
                     return q
                 else:
-                    print("q={:d} is not the order. Continuing ...".format(q))
+                    logging.debug(f"\tq={q} is not the order. Continuing ...")
+
+        msg = f"QuantumOrderFinder: failed to find order in {self.max_iters} iterations."
+        raise RuntimeError(msg)
 
 
 class FakeQuantumOrderFinder(QuantumOrderFinder):
-    """Order finding by sampling the known output distribution of the quantum
-    phase estimation circuit. This mimics the exact output of `QuantumOrderFinder`
-    without simulating the quantum circuit, which is slow on a classical computer.
-    However, this method is no faster than brute force."""
+    """Since the output distribution for the function `_sample()` is
+    theoretically known, we can avoid simulating the quantum circuit by
+    directly sampling the distribution. This is fast for small inputs on a
+    classical computer and allows us to quickly debug the other classical parts
+    of the order-finding algorithm.
 
-    def __init__(self, a, N, THRESHOLD=2):
-        super().__init__(a, N, THRESHOLD)
-        of = OrderFinder(a, N)
-        self.r = of.find()
+    It is important to emphasize that the runtime complexity of this method is
+    O(N) and it does not scale well to large inputs. This is because the
+    formulating the distribution requires knowing the order in the first place.
+    So we need to first compute the order by brute force.
+    """
 
-    def distribution(self, M, x, eps=1e-12):
-        """f(x) = sin^2(Mx) / [M sin(x)]^2."""
+    def _distribution(self, M: int, x: float | np.ndarray, eps: float = 1e-12) -> float | np.ndarray:
+        """f(x) = sin^2(M * x) / [M * sin(x)]^2."""
         x = np.maximum(np.abs(x), eps)  # regularize behavior at x=0
         return (np.sin(M * x) ** 2) / ((M * np.sin(x)) ** 2)
 
-    def sample(self):
+    def _sample(self):
         """Sample directly from known distribution."""
+        logging.debug("\tSampling from known distribution ...")
         M = 2**self.m
-        k = np.random.randint(self.r)
-        deltas = np.pi * (k * 1.0 / self.r - np.linspace(0, 1, M, endpoint=False))
-        probs = self.distribution(M, deltas)
+        k = np.random.randint(self._order)
+        deltas = np.pi * (k * 1.0 / self._order - np.linspace(0, 1, M, endpoint=False))
+        probs = self._distribution(M, deltas)
         return np.random.choice(M, p=probs)
-
-    def find(self):
-        print("FAKE QUANTUM CIRCUIT")
-        return super().find()
-
-
-def _continued_fraction(p, q):
-    """Given p/q, return its continued fraction as a sequence."""
-    while q != 0:
-        a = p // q
-        yield a
-        p, q = q, p - q * a
-
-
-def _approximate_fraction(p, q, N):
-    """Given p/q, find the closest fraction a/b where b < N. Returns a tuple (a, b)."""
-    # truncate continued fraction expansion when denominator >= N
-    a1, a2 = 1, 0
-    b1, b2 = 0, 1
-    truncated = False
-    for k in _continued_fraction(p, q):
-        if k * b1 + b2 >= N:
-            truncated = True
-            break
-        a1, a2 = k * a1 + a2, a1
-        b1, b2 = k * b1 + b2, b1
-
-    if truncated:
-        # use largest j where k/2 <= j < k and j*b1 + b2 < N.
-        j = (N - b2) // b1
-        if j >= k:
-            pass
-        elif k < 2 * j:  # found good j
-            a1 = j * a1 + a2
-            b1 = j * b1 + b2
-        elif k == 2 * j:  # if k even, j = k/2 only admissible if the approximation is better
-            next_a = j * a1 + a2
-            next_b = j * b1 + b2
-            if abs((p * 1.0) / q - (next_a * 1.0) / next_b) < abs((p * 1.0) / q - (a1 * 1.0) / b1):
-                a1, b1 = next_a, next_b
-        # else, no better approximation
-    return a1, b1
