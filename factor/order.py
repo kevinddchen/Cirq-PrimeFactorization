@@ -99,7 +99,7 @@ class QuantumOrderFinder(OrderFinder):
     def find(self) -> int:
         """Find the order."""
         logging.debug(f"Finding order of {self.a} modulo {self.N} ...")
-        logging.debug(f"Running on {self.n} qubits ...")
+        logging.debug(f"Running on {5*self.n+2} qubits (n={self.n}) ...")
         logging.debug(f"- threshold={self.threshold}")
         logging.debug(f"- max_iters={self.max_iters}")
 
